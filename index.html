@@ -474,6 +474,21 @@
 
     const FEE_PER_COURSE = 15000;
     const GST_RATE = 0.18;
+    const COURSE_SEQUENCE = [
+      "OLCU614",
+      "BUSU620",
+      "MKTU605",
+      "BUSU610",
+      "ACCU602",
+      "OLCU653",
+      "FINU607",
+      "OLCU613",
+      "OLCU632",
+      "BUSU600",
+      "HRCU630",
+      "BUSU640"
+    ];
+    const COURSE_SEQUENCE_INDEX = new Map(COURSE_SEQUENCE.map((code, idx) => [code, idx]));
     const HARDCODED_BATCH_MAPPING = {
       "B00722885": "1",
       "B00725472": "1",
@@ -1199,6 +1214,49 @@
       return v ? v : "Blank";
     }
 
+    function normalizeCourseCode(value) {
+      return String(value || "").trim().toUpperCase();
+    }
+
+    function compareCourseCodes(a, b) {
+      const aa = normalizeCourseCode(a);
+      const bb = normalizeCourseCode(b);
+      const ai = COURSE_SEQUENCE_INDEX.has(aa) ? COURSE_SEQUENCE_INDEX.get(aa) : COURSE_SEQUENCE.length;
+      const bi = COURSE_SEQUENCE_INDEX.has(bb) ? COURSE_SEQUENCE_INDEX.get(bb) : COURSE_SEQUENCE.length;
+      if (ai !== bi) return ai - bi;
+      return aa.localeCompare(bb, undefined, { numeric: true });
+    }
+
+    function sortCourseCodes(courseCodes) {
+      return Array.from(courseCodes).sort(compareCourseCodes);
+    }
+
+    function compareBatchLabels(a, b) {
+      const diff = batchSortValue(a) - batchSortValue(b);
+      if (diff !== 0) return diff;
+      return String(a || "").localeCompare(String(b || ""), undefined, { numeric: true });
+    }
+
+    function compareStudentIds(a, b) {
+      return String(a || "").localeCompare(String(b || ""), undefined, { numeric: true });
+    }
+
+    function getRowCourseCode(row) {
+      return row?.["Course Code"] ?? row?.courseCode ?? "";
+    }
+
+    function compareCourseRows(a, b) {
+      const courseDiff = compareCourseCodes(getRowCourseCode(a), getRowCourseCode(b));
+      if (courseDiff !== 0) return courseDiff;
+      const batchDiff = compareBatchLabels(a?.["Actual Batch Number"], b?.["Actual Batch Number"]);
+      if (batchDiff !== 0) return batchDiff;
+      return compareStudentIds(a?.["Unique Id"] ?? a?.sid, b?.["Unique Id"] ?? b?.sid);
+    }
+
+    function sortRowsByCourseSequence(rows) {
+      return [...rows].sort(compareCourseRows);
+    }
+
     function getTermSortValue(termBatchNumber) {
       const n = Number(String(termBatchNumber || "").replace(/[^\d]/g, ""));
       return Number.isFinite(n) ? n : 0;
@@ -1226,6 +1284,7 @@
       const sorted = working.sort((a, b) => {
         const av = a[key];
         const bv = b[key];
+        if (key === "Course Code") return compareCourseCodes(av, bv) * dir;
         const an = Number(av);
         const bn = Number(bv);
         if (!Number.isNaN(an) && !Number.isNaN(bn)) return (an - bn) * dir;
@@ -1849,6 +1908,7 @@
           gradeTimeline: orderedAttempts.map((attempt, idx) => ({
             grade: blankLabel(attempt.grade),
             label: formatAttemptGradeLabel(attempt),
+            titles: Array.from(attempt.titles || []),
             highlightPass: hasPriorPassBeforeLatestFail && idx < orderedAttempts.length - 1 && isPassingGrade(attempt.grade)
           })),
           titleTimeline: orderedAttempts.flatMap((attempt, idx) =>
@@ -1887,7 +1947,7 @@
         courseRows
           .map(r => String(r["Course Code"] || "").trim())
           .filter(Boolean)
-      )).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+      )).sort(compareCourseCodes);
 
       const studentCourseStatus = new Map();
       const studentsInReport = new Set();
@@ -1947,13 +2007,13 @@
 
     function getStatusCourseColumns(rows) {
       const firstRow = rows[0] || {};
-      return Object.keys(firstRow).filter(k =>
+      return sortCourseCodes(Object.keys(firstRow).filter(k =>
         k !== "BO Id" &&
         k !== "Student Name" &&
         k !== "Actual Batch Number" &&
         k !== "Title" &&
         k !== "PDF Batch Number"
-      );
+      ));
     }
 
     function buildStudentCourseStatusCountRows(statusRows) {
@@ -2111,6 +2171,70 @@
       });
     }
 
+    function normalizeGradeForComparison(grade) {
+      return blankLabel(grade).toUpperCase().replace(/\s+/g, "");
+    }
+
+    function hasSameReportDifferentGrade(timeline) {
+      const gradesByTitle = new Map();
+      (timeline || []).forEach(entry => {
+        const gradeKey = normalizeGradeForComparison(entry.grade);
+        const titles = Array.isArray(entry.titles) ? entry.titles : [];
+        titles.forEach(title => {
+          const reportTitle = String(title || "").trim();
+          if (!reportTitle) return;
+          if (!gradesByTitle.has(reportTitle)) gradesByTitle.set(reportTitle, new Set());
+          gradesByTitle.get(reportTitle).add(gradeKey);
+        });
+      });
+      return Array.from(gradesByTitle.values()).some(grades => grades.size > 1);
+    }
+
+    function buildStudentGradeDiscrepancyRows(statusRows, specialFailKeys, attemptTimelineByKey) {
+      const courseColumns = getStatusCourseColumns(statusRows);
+      const discrepancyCourseColumns = courseColumns.filter(courseCode =>
+        statusRows.some(statusRow => {
+          const studentId = String(statusRow["BO Id"] || "").trim().toUpperCase();
+          return specialFailKeys.has(`${studentId}::${courseCode}`);
+        })
+      );
+      const yellowHighlightKeys = new Set();
+      const rows = [];
+
+      statusRows.forEach(statusRow => {
+        const studentId = String(statusRow["BO Id"] || "").trim().toUpperCase();
+        const out = {
+          "BO Id": statusRow["BO Id"],
+          "Student Name": statusRow["Student Name"],
+          "Actual Batch Number": statusRow["Actual Batch Number"]
+        };
+        let hasDiscrepancy = false;
+
+        discrepancyCourseColumns.forEach(courseCode => {
+          const key = `${studentId}::${courseCode}`;
+          if (specialFailKeys.has(key)) {
+            const timeline = attemptTimelineByKey.get(key) || [];
+            const labels = timeline.map(entry => entry.label || entry.grade).filter(Boolean);
+            out[courseCode] = labels.join(", ");
+            hasDiscrepancy = true;
+            if (hasSameReportDifferentGrade(timeline)) {
+              yellowHighlightKeys.add(key);
+            }
+          } else {
+            out[courseCode] = "";
+          }
+        });
+
+        if (hasDiscrepancy) rows.push(out);
+      });
+
+      return {
+        rows,
+        headers: ["BO Id", "Student Name", "Actual Batch Number", ...discrepancyCourseColumns],
+        yellowHighlightKeys
+      };
+    }
+
     function excelFillFromStatus(status) {
       const fill = getStatusFill(status);
       return fill ? `FF${fill}` : "";
@@ -2141,9 +2265,9 @@
       });
     }
 
-    function addJsonExcelWorksheet(wb, name, rows) {
+    function addJsonExcelWorksheet(wb, name, rows, headersOverride = null) {
       const ws = wb.addWorksheet(name);
-      const headers = Object.keys(rows[0] || {});
+      const headers = headersOverride || Object.keys(rows[0] || {});
       ws.addRow(headers);
       rows.forEach(row => {
         ws.addRow(headers.map(header => row[header] ?? ""));
@@ -2263,6 +2387,52 @@
           const cell = ws.getCell(rowIdx + 2, colIdx);
           cell.value = { richText };
           cell.alignment = { wrapText: true, vertical: "top" };
+        });
+      });
+    }
+
+    function applyExcelGradeDiscrepancyStyles(ws, discrepancyRows, attemptTimelineByKey, yellowHighlightKeys) {
+      if (!discrepancyRows.length || !attemptTimelineByKey?.size) return;
+      const courseColumns = getStatusCourseColumns(discrepancyRows);
+      const headers = ws.getRow(1).values.slice(1);
+      const headerToIndex = new Map(headers.map((header, idx) => [header, idx + 1]));
+
+      courseColumns.forEach(courseCode => {
+        const colIdx = headerToIndex.get(courseCode);
+        if (!colIdx) return;
+        discrepancyRows.forEach((row, rowIdx) => {
+          if (!String(row[courseCode] || "").trim()) return;
+          const studentId = String(row["BO Id"] || "").trim().toUpperCase();
+          const key = `${studentId}::${courseCode}`;
+          const timeline = attemptTimelineByKey.get(key) || [];
+          const cell = ws.getCell(rowIdx + 2, colIdx);
+
+          cell.fill = {
+            type: "pattern",
+            pattern: "solid",
+            fgColor: { argb: yellowHighlightKeys.has(key) ? "FFFFFF00" : "FFFEE2E2" }
+          };
+          cell.alignment = { wrapText: true, vertical: "top" };
+
+          if (!timeline.length) return;
+          const richText = [];
+          timeline.forEach((entry, idx) => {
+            if (idx > 0) richText.push({ text: ", " });
+            if (entry.highlightPass) {
+              richText.push({
+                text: entry.label || entry.grade,
+                font: { bold: true, color: { argb: "FF166534" } }
+              });
+            } else if (idx === timeline.length - 1) {
+              richText.push({
+                text: entry.label || entry.grade,
+                font: { bold: true, color: { argb: "FFB91C1C" } }
+              });
+            } else {
+              richText.push({ text: entry.label || entry.grade });
+            }
+          });
+          cell.value = { richText };
         });
       });
     }
@@ -2497,7 +2667,12 @@
         [
           "Course population",
           "A course code appears in at least one processed counted row from uploaded PDFs.",
-          "That course code becomes a column in Student Course Status, Latest Grades, and Course Attempts."
+          "That course code becomes a column in Student Course Status, Course Attempts, Grade Discrepancy, and Latest Grades."
+        ],
+        [
+          "Course sequence",
+          "A report contains more than one course.",
+          "Known courses follow this fixed order: OLCU614, BUSU620, MKTU605, BUSU610, ACCU602, OLCU653, FINU607, OLCU613, OLCU632, BUSU600, HRCU630, BUSU640. Any other detected course appears after these."
         ],
         [
           "Missing course for present student",
@@ -2518,9 +2693,14 @@
           "Course cells show Passed, Failed, Prospective, Not Found, or Eligible for Convocation."
         ],
         [
-          "Course Status Counts",
-          "Course-wise totals by status.",
-          "Each row is a course code with counts of Prospective, Passed, Eligible for Convocation, Not Found, and Failed."
+          "Course Attempts",
+          "Same structure as Latest Grades, but course cells show all counted grades for that student-course.",
+          "Attempts are comma-separated in chronological order with report title and grade, for example B2 I1 2026: C-, B2 I2 2026: B."
+        ],
+        [
+          "Grade Discrepancy",
+          "Student-course matrix filtered to earlier passing grade followed by a later failing grade.",
+          "Only affected students are shown. Course cells contain the chronological attempt labels for the discrepant course."
         ],
         [
           "Latest Grades",
@@ -2528,9 +2708,9 @@
           "If there is no grade for that student-course, the cell keeps Prospective or Not Found."
         ],
         [
-          "Course Attempts",
-          "Same structure as Latest Grades, but course cells show all counted grades for that student-course.",
-          "Attempts are comma-separated in chronological order with report title and grade, for example B2 I1 2026: C-, B2 I2 2026: B."
+          "Course Status Counts",
+          "Course-wise totals by status.",
+          "Each row is a course code with counts of Prospective, Passed, Eligible for Convocation, Not Found, and Failed."
         ],
         [
           "Batch Status Counts",
@@ -2568,12 +2748,17 @@
         [
           "Bold red font in course cell",
           "Special case where latest counted attempt is failed after an earlier counted passing attempt.",
-          "Failed status in Student Course Status, latest failed grade in Latest Grades, and latest failed grade inside Course Attempts."
+          "Failed status in Student Course Status, latest failed grade in Latest Grades, and latest failed grade inside Course Attempts and Grade Discrepancy."
         ],
         [
-          "Bold green font in Course Attempts",
+          "Bold green font in Course Attempts and Grade Discrepancy",
           "Earlier passing grade in the special case where latest counted attempt is failed.",
           "The earlier passing attempt label inside the comma-separated attempt list, including report title and grade."
+        ],
+        [
+          "Yellow fill in Grade Discrepancy",
+          "The same report title shows more than one grade for the same student-course.",
+          "The whole course cell is highlighted yellow when those repeated visible grades are different."
         ]
       ];
 
@@ -2654,16 +2839,22 @@
         x.amountIncl += Number(r["Amount (Incl GST)"] || 0);
       }
 
-      const rows = Array.from(map.values()).map(x => ({
-        "Actual Batch Number": x.batch,
-        "Course Code": x.courseCode,
-        "Batch Number": joinBatchValues(x.pdfBatches),
-        "No. of Students": x.students.size,
-        "Payable Retake Attempts": x.payableAttempts,
-        "Amount (Excl GST)": Number(x.amountExcl.toFixed(2)),
-        "GST Amount": Number(x.gstAmount.toFixed(2)),
-        "Amount (Incl GST)": Number(x.amountIncl.toFixed(2))
-      }));
+      const rows = Array.from(map.values())
+        .sort((a, b) => {
+          const batchDiff = compareBatchLabels(a.batch, b.batch);
+          if (batchDiff !== 0) return batchDiff;
+          return compareCourseCodes(a.courseCode, b.courseCode);
+        })
+        .map(x => ({
+          "Actual Batch Number": x.batch,
+          "Course Code": x.courseCode,
+          "Batch Number": joinBatchValues(x.pdfBatches),
+          "No. of Students": x.students.size,
+          "Payable Retake Attempts": x.payableAttempts,
+          "Amount (Excl GST)": Number(x.amountExcl.toFixed(2)),
+          "GST Amount": Number(x.gstAmount.toFixed(2)),
+          "Amount (Incl GST)": Number(x.amountIncl.toFixed(2))
+        }));
 
       const total = rows.reduce((acc, r) => {
         acc["No. of Students"] += Number(r["No. of Students"] || 0);
@@ -2717,23 +2908,26 @@
         });
       }
 
-      return Array.from(map.values()).map(x => ({
-        "Unique Id": x.sid,
-        "Batch Number": joinBatchValues(x.pdfBatches),
-        "Actual Batch Number": x.actualBatchNumber || "",
-        "Name": x.name,
-        "Overall GPA": x.gpa,
-        "Total Hours Passed": x.totalHoursPassed,
-        "Total Hours Attempted": x.totalHoursAttempted,
-        "Failed Courses Count": x.failedCourses.length,
-        "Latest Failed Courses": x.failedCourses.map(c => c.courseCode).join(", "),
-        "Latest Failed Grades": x.failedCourses.map(c => `${c.courseCode}: ${c.latestGrade}`).join(", "),
-        "Failed Attempts": x.failedCourses.reduce((acc, c) => acc + c.failedAttempts, 0)
-      }));
+      return Array.from(map.values()).map(x => {
+        const sortedFailedCourses = [...x.failedCourses].sort((a, b) => compareCourseCodes(a.courseCode, b.courseCode));
+        return {
+          "Unique Id": x.sid,
+          "Batch Number": joinBatchValues(x.pdfBatches),
+          "Actual Batch Number": x.actualBatchNumber || "",
+          "Name": x.name,
+          "Overall GPA": x.gpa,
+          "Total Hours Passed": x.totalHoursPassed,
+          "Total Hours Attempted": x.totalHoursAttempted,
+          "Failed Courses Count": sortedFailedCourses.length,
+          "Latest Failed Courses": sortedFailedCourses.map(c => c.courseCode).join(", "),
+          "Latest Failed Grades": sortedFailedCourses.map(c => `${c.courseCode}: ${c.latestGrade}`).join(", "),
+          "Failed Attempts": sortedFailedCourses.reduce((acc, c) => acc + c.failedAttempts, 0)
+        };
+      });
     }
 
     function buildFeeStudentDetailRows(feeRows) {
-      return feeRows.map(r => ({
+      return sortRowsByCourseSequence(feeRows).map(r => ({
         "Actual Batch Number": r["Actual Batch Number"] || "",
         "Course Code": r["Course Code"],
         "Batch Number": r["Batch Number"],
@@ -2782,13 +2976,15 @@
         x.totalFeeReceivable += Number(feeRow?.["Amount (Incl GST)"] || 0);
       }
 
-      const rows = Array.from(map.values()).map(x => ({
-        "Course Code": x.courseCode,
-        "Retake Fee Applicable Student Count": x.feeApplicableCount,
-        "Retake Fee Not Applicable Student Count": x.feeNotApplicableCount,
-        "Total Failed Student Count": x.totalFailedCount,
-        "Total Fee Receivable": Number(x.totalFeeReceivable.toFixed(2))
-      }));
+      const rows = Array.from(map.values())
+        .sort((a, b) => compareCourseCodes(a.courseCode, b.courseCode))
+        .map(x => ({
+          "Course Code": x.courseCode,
+          "Retake Fee Applicable Student Count": x.feeApplicableCount,
+          "Retake Fee Not Applicable Student Count": x.feeNotApplicableCount,
+          "Total Failed Student Count": x.totalFailedCount,
+          "Total Fee Receivable": Number(x.totalFeeReceivable.toFixed(2))
+        }));
 
       const total = rows.reduce((acc, r) => {
         acc["Retake Fee Applicable Student Count"] += Number(r["Retake Fee Applicable Student Count"] || 0);
@@ -2825,6 +3021,7 @@
 
       return courseRows
         .filter(r => r["Failed Course"] === "Yes")
+        .sort(compareCourseRows)
         .map(r => {
           const feeRow = feeMap.get(`${getStudentGroupKey(r)}::${r["Course Code"]}`);
           const failGrades = getFailGradesFromAllGrades(r["All Grades"]);
@@ -3011,7 +3208,7 @@
           });
         }
       }
-      return feeRows;
+      return sortRowsByCourseSequence(feeRows);
     }
 
     processBtn.addEventListener("click", async () => {
@@ -3121,10 +3318,10 @@
         return;
       }
 
-      const ws = XLSX.utils.json_to_sheet(addSerialNumber(mapExportRows(consolidatedRows)));
+      const ws = XLSX.utils.json_to_sheet(addSerialNumber(mapExportRows(sortRowsByCourseSequence(consolidatedRows))));
       const ws2 = XLSX.utils.json_to_sheet(addSerialNumber(mapExportRows(studentSummaryRows)));
-      const ws3 = XLSX.utils.json_to_sheet(addSerialNumber(mapExportRows(feeApplicableRows)));
-      const ws4 = XLSX.utils.json_to_sheet(addSerialNumber(mapExportRows(failedCourseRows)));
+      const ws3 = XLSX.utils.json_to_sheet(addSerialNumber(mapExportRows(sortRowsByCourseSequence(feeApplicableRows))));
+      const ws4 = XLSX.utils.json_to_sheet(addSerialNumber(mapExportRows(sortRowsByCourseSequence(failedCourseRows))));
       const ws5 = XLSX.utils.json_to_sheet(addSerialNumber(mapExportRows(latestFailedStudentRows)));
       const ws6 = XLSX.utils.json_to_sheet(addSerialNumber(mapExportRows(feeSummaryRows)));
       const ws7 = XLSX.utils.json_to_sheet(addSerialNumber(mapExportRows(feeStudentDetailRows)));
@@ -3156,6 +3353,11 @@
       const countRows = buildStudentCourseStatusCountRows(statusRows);
       const latestGradeReport = buildStudentLatestGradeRows(masterCourseRows, statusRows);
       const courseAttemptRows = buildStudentCourseAttemptRows(masterCourseRows, statusRows);
+      const gradeDiscrepancyReport = buildStudentGradeDiscrepancyRows(
+        statusRows,
+        latestGradeReport.specialFailKeys,
+        latestGradeReport.attemptTimelineByKey
+      );
       const batchStatusRows = XLSX.utils.sheet_to_json(
         buildBatchWiseSubjectStatusCountWorksheet(statusRows),
         { header: 1, defval: "", blankrows: true }
@@ -3167,22 +3369,34 @@
 
       const wb = new window.ExcelJS.Workbook();
       const ws = addJsonExcelWorksheet(wb, "Student Course Status", statusRows);
-      const ws2 = addJsonExcelWorksheet(wb, "Course Status Counts", countRows);
-      const ws3 = addJsonExcelWorksheet(wb, "Latest Grades", latestGradeReport.rows);
-      const ws4 = addJsonExcelWorksheet(wb, "Course Attempts", courseAttemptRows);
+      const ws2 = addJsonExcelWorksheet(wb, "Course Attempts", courseAttemptRows);
+      const ws3 = addJsonExcelWorksheet(
+        wb,
+        "Grade Discrepancy",
+        gradeDiscrepancyReport.rows,
+        gradeDiscrepancyReport.headers
+      );
+      const ws4 = addJsonExcelWorksheet(wb, "Latest Grades", latestGradeReport.rows);
+      addJsonExcelWorksheet(wb, "Course Status Counts", countRows);
       addAoaExcelWorksheet(wb, "Batch Status Counts", batchStatusRows);
       addAoaExcelWorksheet(wb, "Status Definitions", definitionRows);
       applyExcelStudentMatrixStyles(ws, statusRows, { specialFailKeys: latestGradeReport.specialFailKeys });
-      applyExcelStudentMatrixStyles(ws3, statusRows, { specialFailKeys: latestGradeReport.specialFailKeys });
+      applyExcelStudentMatrixStyles(ws2, statusRows, { specialFailKeys: latestGradeReport.specialFailKeys });
       applyExcelStudentMatrixStyles(ws4, statusRows, { specialFailKeys: latestGradeReport.specialFailKeys });
       applyExcelSpecialTitleStyles(ws, statusRows, latestGradeReport.specialTitlesByStudent);
-      applyExcelSpecialTitleStyles(ws3, latestGradeReport.rows, latestGradeReport.specialTitlesByStudent);
-      applyExcelSpecialTitleStyles(ws4, courseAttemptRows, latestGradeReport.specialTitlesByStudent);
+      applyExcelSpecialTitleStyles(ws2, courseAttemptRows, latestGradeReport.specialTitlesByStudent);
+      applyExcelSpecialTitleStyles(ws4, latestGradeReport.rows, latestGradeReport.specialTitlesByStudent);
       applyExcelCourseAttemptStyles(
-        ws4,
+        ws2,
         statusRows,
         latestGradeReport.attemptTimelineByKey,
         latestGradeReport.specialFailKeys
+      );
+      applyExcelGradeDiscrepancyStyles(
+        ws3,
+        gradeDiscrepancyReport.rows,
+        latestGradeReport.attemptTimelineByKey,
+        gradeDiscrepancyReport.yellowHighlightKeys
       );
       await writeExcelJsWorkbook(wb, "Student_Course_Status_Report.xlsx");
       setStatus("Student course status report downloaded successfully.", "ok");
@@ -3237,7 +3451,7 @@
       const wb = XLSX.utils.book_new();
       const usedNames = new Set();
       Array.from(byCourse.entries())
-        .sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true }))
+        .sort((a, b) => compareCourseCodes(a[0], b[0]))
         .forEach(([courseCode, courseRows]) => {
           const ws = XLSX.utils.json_to_sheet(addSerialNumber(mapExportRows(courseRows)));
           XLSX.utils.book_append_sheet(wb, ws, makeSheetName(courseCode, usedNames));
