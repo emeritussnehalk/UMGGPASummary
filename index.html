@@ -404,9 +404,9 @@
               <td class="report-action"><button id="downloadCourseWiseBtn" class="ghost" disabled>Download</button></td>
             </tr>
             <tr>
-              <td>Prospective Students List</td>
-              <td class="report-desc">Downloads students who have at least one course marked as prospective in the status matrix.</td>
-              <td class="report-action"><button id="downloadProspectiveReportBtn" class="ghost" disabled>Download</button></td>
+              <td>First Timers Students List</td>
+              <td class="report-desc">Downloads students who have at least one course marked as first timers in the status matrix.</td>
+              <td class="report-action"><button id="downloadFirstTimersReportBtn" class="ghost" disabled>Download</button></td>
             </tr>
             <tr>
               <td>Failed Students List</td>
@@ -415,7 +415,7 @@
             </tr>
             <tr>
               <td>Passed Students List</td>
-              <td class="report-desc">Downloads students whose course statuses are passed, not found, or eligible for convocation. Not Found students are included here.</td>
+              <td class="report-desc">Downloads students whose course statuses are passed, withdrawn/ cancelled/ dropout, or eligible for convocation. Withdrawn/ Cancelled/ Dropout students are included here.</td>
               <td class="report-action"><button id="downloadPassedReportBtn" class="ghost" disabled>Download</button></td>
             </tr>
           </tbody>
@@ -452,7 +452,7 @@
     const downloadBtn = document.getElementById("downloadBtn");
     const downloadStatusMatrixBtn = document.getElementById("downloadStatusMatrixBtn");
     const downloadCourseWiseBtn = document.getElementById("downloadCourseWiseBtn");
-    const downloadProspectiveReportBtn = document.getElementById("downloadProspectiveReportBtn");
+    const downloadFirstTimersReportBtn = document.getElementById("downloadFirstTimersReportBtn");
     const downloadFailedReportBtn = document.getElementById("downloadFailedReportBtn");
     const downloadPassedReportBtn = document.getElementById("downloadPassedReportBtn");
     const studentFilterEl = document.getElementById("studentFilter");
@@ -1991,9 +1991,9 @@
             exportRow[courseCode] = status;
             if (status === "Passed") passedCourseCount += 1;
           } else if (studentsInReport.has(studentId)) {
-            exportRow[courseCode] = "Prospective";
+            exportRow[courseCode] = "First Timers";
           } else {
-            exportRow[courseCode] = "Not Found";
+            exportRow[courseCode] = "Withdrawn/ Cancelled/ Dropout";
           }
         }
         if (uniqueCourseCodes.length > 0 && passedCourseCount === uniqueCourseCodes.length) {
@@ -2021,25 +2021,25 @@
       return courseColumns.map(courseCode => {
         const counts = {
           "Course Code": courseCode,
-          "Prospective": 0,
+          "First Timers": 0,
           "Passed": 0,
           "Eligible for Convocation": 0,
-          "Not Found": 0,
+          "Withdrawn/ Cancelled/ Dropout": 0,
           "Failed": 0
         };
 
         for (const row of statusRows) {
           const status = String(row[courseCode] || "").trim();
-          if (status === "Prospective") {
-            counts["Prospective"] += 1;
+          if (status === "First Timers") {
+            counts["First Timers"] += 1;
           } else if (status === "Failed") {
             counts["Failed"] += 1;
           } else if (status === "Passed") {
             counts["Passed"] += 1;
           } else if (status === "Eligible for Convocation") {
             counts["Eligible for Convocation"] += 1;
-          } else if (status === "Not Found") {
-            counts["Not Found"] += 1;
+          } else if (status === "Withdrawn/ Cancelled/ Dropout") {
+            counts["Withdrawn/ Cancelled/ Dropout"] += 1;
           }
         }
 
@@ -2051,8 +2051,8 @@
       const normalized = String(status || "").trim();
       if (normalized === "Passed" || normalized === "Eligible for Convocation") return "DCFCE7";
       if (normalized === "Failed") return "FEE2E2";
-      if (normalized === "Not Found") return "FFEDD5";
-      if (normalized === "Prospective") return "DBEAFE";
+      if (normalized === "Withdrawn/ Cancelled/ Dropout") return "FFEDD5";
+      if (normalized === "First Timers") return "DBEAFE";
       return "";
     }
 
@@ -2457,9 +2457,9 @@
       const statusColumns = [
         "Eligible for Convocation",
         "Failed",
-        "Not Found",
+        "Withdrawn/ Cancelled/ Dropout",
         "Passed",
-        "Prospective"
+        "First Timers"
       ];
       const batchLabels = Array.from(new Set(
         statusRows
@@ -2559,14 +2559,14 @@
           "The latest attempt still controls status, so the course cell is marked Failed. This special case is highlighted with bold red on the Failed/latest grade cell."
         ],
         [
-          "Prospective",
+          "First Timers",
           "Student appears in the uploaded GPA data for at least one course, but has no counted attempt for this specific course column.",
-          "The course cell is marked Prospective because the student is present in the report set, but this course is missing for that student."
+          "The course cell is marked First Timers because the student is present in the report set, but this course is missing for that student."
         ],
         [
-          "Not Found",
+          "Withdrawn/ Cancelled/ Dropout",
           "Student is present in the built-in BO Id master list, but does not appear in any processed row from the uploaded PDFs.",
-          "Every detected course cell for that student is marked Not Found."
+          "Every detected course cell for that student is marked Withdrawn/ Cancelled/ Dropout."
         ],
         [
           "Eligible for Convocation",
@@ -2575,7 +2575,7 @@
         ],
         [
           "Eligible for Convocation",
-          "Student is missing no detected course and has no Failed or Prospective course after status calculation.",
+          "Student is missing no detected course and has no Failed or First Timers course after status calculation.",
           "The report treats this as completion across the currently detected course population."
         ],
         [],
@@ -2677,12 +2677,12 @@
         [
           "Missing course for present student",
           "Student appears in processed data for other courses, but not for this course column.",
-          "That course cell is marked Prospective."
+          "That course cell is marked First Timers."
         ],
         [
           "Absent student",
           "Student appears in the built-in mapping but does not appear in any processed row.",
-          "That student's course cells are marked Not Found."
+          "That student's course cells are marked Withdrawn/ Cancelled/ Dropout."
         ],
         [],
         ["Workbook Sheets"],
@@ -2690,7 +2690,7 @@
         [
           "Student Course Status",
           "Main BO Id-wise status matrix.",
-          "Course cells show Passed, Failed, Prospective, Not Found, or Eligible for Convocation."
+          "Course cells show Passed, Failed, First Timers, Withdrawn/ Cancelled/ Dropout, or Eligible for Convocation."
         ],
         [
           "Course Attempts",
@@ -2705,12 +2705,12 @@
         [
           "Latest Grades",
           "Same structure as Student Course Status, but course cells show the latest counted grade where available.",
-          "If there is no grade for that student-course, the cell keeps Prospective or Not Found."
+          "If there is no grade for that student-course, the cell keeps First Timers or Withdrawn/ Cancelled/ Dropout."
         ],
         [
           "Course Status Counts",
           "Course-wise totals by status.",
-          "Each row is a course code with counts of Prospective, Passed, Eligible for Convocation, Not Found, and Failed."
+          "Each row is a course code with counts of First Timers, Passed, Eligible for Convocation, Withdrawn/ Cancelled/ Dropout, and Failed."
         ],
         [
           "Batch Status Counts",
@@ -2737,12 +2737,12 @@
         ],
         [
           "Light orange fill",
-          "Not Found.",
+          "Withdrawn/ Cancelled/ Dropout.",
           "Course cells in Student Course Status, Latest Grades, and Course Attempts."
         ],
         [
           "Light blue fill",
-          "Prospective.",
+          "First Timers.",
           "Course cells in Student Course Status, Latest Grades, and Course Attempts."
         ],
         [
@@ -2778,12 +2778,12 @@
       return statusRows.filter(row => {
         const statuses = courseColumns.map(col => String(row[col] || "").trim()).filter(Boolean);
         if (!statuses.length) return false;
-        if (type === "prospective") return statuses.includes("Prospective");
+        if (type === "firstTimers") return statuses.includes("First Timers");
         if (type === "failed") return statuses.includes("Failed");
         if (type === "passed") {
           return statuses.every(status =>
             status === "Passed" ||
-            status === "Not Found" ||
+            status === "Withdrawn/ Cancelled/ Dropout" ||
             status === "Eligible for Convocation"
           );
         }
@@ -3221,7 +3221,7 @@
       downloadBtn.disabled = true;
       downloadStatusMatrixBtn.disabled = true;
       downloadCourseWiseBtn.disabled = true;
-      downloadProspectiveReportBtn.disabled = true;
+      downloadFirstTimersReportBtn.disabled = true;
       downloadFailedReportBtn.disabled = true;
       downloadPassedReportBtn.disabled = true;
       applySearchBtn.disabled = true;
@@ -3292,7 +3292,7 @@
         downloadBtn.disabled = false;
         downloadStatusMatrixBtn.disabled = false;
         downloadCourseWiseBtn.disabled = false;
-        downloadProspectiveReportBtn.disabled = false;
+        downloadFirstTimersReportBtn.disabled = false;
         downloadFailedReportBtn.disabled = false;
         downloadPassedReportBtn.disabled = false;
         applySearchBtn.disabled = false;
@@ -3402,12 +3402,12 @@
       setStatus("Student course status report downloaded successfully.", "ok");
     });
 
-    downloadProspectiveReportBtn.addEventListener("click", () => {
+    downloadFirstTimersReportBtn.addEventListener("click", () => {
       downloadStudentStatusSubsetReport(
-        "prospective",
-        "Prospective_Students_List.xlsx",
-        "Prospective Students",
-        "Prospective students report downloaded successfully."
+        "firstTimers",
+        "First_Timers_Students_List.xlsx",
+        "First Timers Students",
+        "First Timers students report downloaded successfully."
       );
     });
 
