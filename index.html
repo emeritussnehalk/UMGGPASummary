@@ -415,7 +415,7 @@
             </tr>
             <tr>
               <td>Passed Students List</td>
-              <td class="report-desc">Downloads students whose course statuses are passed, withdrawn/ cancelled/ dropout, or eligible for convocation. Withdrawn/ Cancelled/ Dropout students are included here.</td>
+              <td class="report-desc">Downloads students whose course statuses are passed, not found, or eligible for convocation. Not Found students are included here.</td>
               <td class="report-action"><button id="downloadPassedReportBtn" class="ghost" disabled>Download</button></td>
             </tr>
           </tbody>
@@ -1535,7 +1535,7 @@
 
       // Header labels may be absent or broken across text items. Infer by value order.
       const summaryRegex =
-        /(B\d{6,})\s+(.+?)\s+([0-4](?:\.\d+)?)\s+(\d{1,3})\s+(\d{1,3})(?:\s*GPA:)?/i;
+        /(B\d{6,})\s+(.+?)\s+(?:GPA\s*:?\s*)?([0-4](?:\.\d+)?)(?:\s+Hours\s+Passed\s*:?\s*|\s+)(\d{1,3})(?:\s+Hours\s+Attempted\s*:?\s*|\s+)(\d{1,3})/i;
 
       for (const rawLine of lines) {
         const line = normalizeSpaces(rawLine);
@@ -1817,6 +1817,7 @@
             termBatchNumbers: new Set(),
             pdfBatches: new Set(),
             titles: new Set(),
+            summarySort: -1,
             attempts: [],
             attemptKeys: new Set(),
             attemptMap: new Map(),
@@ -1827,6 +1828,19 @@
         const grade = blankLabel(r["Grade"]);
         const termSort = getTermSortValue(r["Term Batch Number"]);
         const levelSort = getLevelSortValue(r["L Level"]);
+        const rowTitleSort = Math.max(
+          0,
+          ...splitTitleValues(r["Title"])
+            .map(titleSortValue)
+            .filter(value => value !== Number.MAX_SAFE_INTEGER)
+        );
+        if (rowTitleSort >= x.summarySort) {
+          x.summarySort = rowTitleSort;
+          x.gpa = r["Overall GPA"];
+          x.passed = r["Total Hours Passed"];
+          x.attempted = r["Total Hours Attempted"];
+          x.name = r["Name"];
+        }
         x.termBatchNumbers.add(blankLabel(r["Term Batch Number"]));
         addBatchValues(x.pdfBatches, r["Batch Number"]);
         addTitleValues(x.titles, r["Title"]);
@@ -1993,7 +2007,7 @@
           } else if (studentsInReport.has(studentId)) {
             exportRow[courseCode] = "First Timers";
           } else {
-            exportRow[courseCode] = "Withdrawn/ Cancelled/ Dropout";
+            exportRow[courseCode] = "Not Found";
           }
         }
         if (uniqueCourseCodes.length > 0 && passedCourseCount === uniqueCourseCodes.length) {
@@ -2024,7 +2038,7 @@
           "First Timers": 0,
           "Passed": 0,
           "Eligible for Convocation": 0,
-          "Withdrawn/ Cancelled/ Dropout": 0,
+          "Not Found": 0,
           "Failed": 0
         };
 
@@ -2038,8 +2052,8 @@
             counts["Passed"] += 1;
           } else if (status === "Eligible for Convocation") {
             counts["Eligible for Convocation"] += 1;
-          } else if (status === "Withdrawn/ Cancelled/ Dropout") {
-            counts["Withdrawn/ Cancelled/ Dropout"] += 1;
+          } else if (status === "Not Found") {
+            counts["Not Found"] += 1;
           }
         }
 
@@ -2051,7 +2065,7 @@
       const normalized = String(status || "").trim();
       if (normalized === "Passed" || normalized === "Eligible for Convocation") return "DCFCE7";
       if (normalized === "Failed") return "FEE2E2";
-      if (normalized === "Withdrawn/ Cancelled/ Dropout") return "FFEDD5";
+      if (normalized === "Not Found") return "FFEDD5";
       if (normalized === "First Timers") return "DBEAFE";
       return "";
     }
@@ -2100,13 +2114,31 @@
 
     function buildStudentLatestGradeRows(courseRows, statusRows) {
       const gradeMap = new Map();
+      const latestGpaByStudent = new Map();
       const specialFailKeys = new Set();
       const specialTitlesByStudent = new Map();
       const attemptTimelineByKey = new Map();
       for (const row of courseRows) {
         const studentId = String(row["Unique Id"] || "").trim().toUpperCase();
         const courseCode = String(row["Course Code"] || "").trim();
-        if (!studentId || !courseCode) continue;
+        if (!studentId) continue;
+        const gpa = row["Overall GPA"];
+        const titleSort = Math.max(
+          0,
+          ...splitTitleValues(row["Title"])
+            .map(titleSortValue)
+            .filter(value => value !== Number.MAX_SAFE_INTEGER)
+        );
+        const currentGpa = latestGpaByStudent.get(studentId);
+        if (
+          gpa !== "" &&
+          gpa !== null &&
+          gpa !== undefined &&
+          (!currentGpa || titleSort >= currentGpa.titleSort)
+        ) {
+          latestGpaByStudent.set(studentId, { gpa, titleSort });
+        }
+        if (!courseCode) continue;
         const key = `${studentId}::${courseCode}`;
         gradeMap.set(key, row["Latest Grade"] || "");
         attemptTimelineByKey.set(key, row.__meta?.gradeTimeline || []);
@@ -2127,16 +2159,29 @@
       const courseColumns = getStatusCourseColumns(statusRows);
       const rows = statusRows.map(statusRow => {
         const studentId = String(statusRow["BO Id"] || "").trim().toUpperCase();
+        const latestFailingCourseCodes = [];
         const out = {
           "BO Id": statusRow["BO Id"],
           "Student Name": statusRow["Student Name"],
-          "Actual Batch Number": statusRow["Actual Batch Number"]
+          "Actual Batch Number": statusRow["Actual Batch Number"],
+          "Latest GPA": latestGpaByStudent.get(studentId)?.gpa ?? "",
+          "Latest Failed Course Count": 0,
+          "Latest Failing Course Codes": ""
         };
         for (const courseCode of courseColumns) {
           const key = `${studentId}::${courseCode}`;
           const status = String(statusRow[courseCode] || "").trim();
-          out[courseCode] = gradeMap.has(key) ? gradeMap.get(key) : status;
+          const latestGrade = gradeMap.has(key) ? gradeMap.get(key) : status;
+          out[courseCode] = latestGrade;
+          if (
+            gradeMap.has(key) &&
+            isFailGrade(latestGrade === "Blank" ? "" : latestGrade)
+          ) {
+            latestFailingCourseCodes.push(courseCode);
+          }
         }
+        out["Latest Failed Course Count"] = latestFailingCourseCodes.length;
+        out["Latest Failing Course Codes"] = latestFailingCourseCodes.join(", ");
         return out;
       });
 
@@ -2457,7 +2502,7 @@
       const statusColumns = [
         "Eligible for Convocation",
         "Failed",
-        "Withdrawn/ Cancelled/ Dropout",
+        "Not Found",
         "Passed",
         "First Timers"
       ];
@@ -2564,9 +2609,9 @@
           "The course cell is marked First Timers because the student is present in the report set, but this course is missing for that student."
         ],
         [
-          "Withdrawn/ Cancelled/ Dropout",
+          "Not Found",
           "Student is present in the built-in BO Id master list, but does not appear in any processed row from the uploaded PDFs.",
-          "Every detected course cell for that student is marked Withdrawn/ Cancelled/ Dropout."
+          "Every detected course cell for that student is marked Not Found."
         ],
         [
           "Eligible for Convocation",
@@ -2657,7 +2702,7 @@
         [
           "Removed matrix columns",
           "Title and PDF Batch Number are not shown as separate columns in the status workbook matrices.",
-          "The matrices keep BO Id, Student Name, Actual Batch Number, and course columns. Report title remains visible inside Course Attempts cells."
+          "Student Course Status, Course Attempts, and Grade Discrepancy keep BO Id, Student Name, Actual Batch Number, and course columns. Latest Grades also includes Latest GPA, Latest Failed Course Count, and Latest Failing Course Codes before the course columns. Report title remains visible inside Course Attempts cells."
         ],
         [
           "Combined or all-batch PDF",
@@ -2682,7 +2727,7 @@
         [
           "Absent student",
           "Student appears in the built-in mapping but does not appear in any processed row.",
-          "That student's course cells are marked Withdrawn/ Cancelled/ Dropout."
+          "That student's course cells are marked Not Found."
         ],
         [],
         ["Workbook Sheets"],
@@ -2690,7 +2735,7 @@
         [
           "Student Course Status",
           "Main BO Id-wise status matrix.",
-          "Course cells show Passed, Failed, First Timers, Withdrawn/ Cancelled/ Dropout, or Eligible for Convocation."
+          "Course cells show Passed, Failed, First Timers, Not Found, or Eligible for Convocation."
         ],
         [
           "Course Attempts",
@@ -2704,13 +2749,13 @@
         ],
         [
           "Latest Grades",
-          "Same structure as Student Course Status, but course cells show the latest counted grade where available.",
-          "If there is no grade for that student-course, the cell keeps First Timers or Withdrawn/ Cancelled/ Dropout."
+          "Same structure as Student Course Status with added latest GPA and latest failing-course summary columns, but course cells show the latest counted grade where available.",
+          "Latest Failed Course Count counts course columns whose latest extracted grade is failing. Latest Failing Course Codes lists those courses comma-separated."
         ],
         [
           "Course Status Counts",
           "Course-wise totals by status.",
-          "Each row is a course code with counts of First Timers, Passed, Eligible for Convocation, Withdrawn/ Cancelled/ Dropout, and Failed."
+          "Each row is a course code with counts of First Timers, Passed, Eligible for Convocation, Not Found, and Failed."
         ],
         [
           "Batch Status Counts",
@@ -2737,7 +2782,7 @@
         ],
         [
           "Light orange fill",
-          "Withdrawn/ Cancelled/ Dropout.",
+          "Not Found.",
           "Course cells in Student Course Status, Latest Grades, and Course Attempts."
         ],
         [
@@ -2783,7 +2828,7 @@
         if (type === "passed") {
           return statuses.every(status =>
             status === "Passed" ||
-            status === "Withdrawn/ Cancelled/ Dropout" ||
+            status === "Not Found" ||
             status === "Eligible for Convocation"
           );
         }
