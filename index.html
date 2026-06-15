@@ -2112,12 +2112,19 @@
       });
     }
 
-    function buildStudentLatestGradeRows(courseRows, statusRows) {
+    function buildStudentLatestGradeRows(courseRows, statusRows, feeRows = []) {
       const gradeMap = new Map();
       const latestGpaByStudent = new Map();
       const specialFailKeys = new Set();
       const specialTitlesByStudent = new Map();
       const attemptTimelineByKey = new Map();
+      const retakeFeeByStudent = new Map();
+      for (const row of feeRows) {
+        const studentId = String(row["Unique Id"] || "").trim().toUpperCase();
+        if (!studentId) continue;
+        if (!retakeFeeByStudent.has(studentId)) retakeFeeByStudent.set(studentId, false);
+        if (row["Fee Applicable"] === "Yes") retakeFeeByStudent.set(studentId, true);
+      }
       for (const row of courseRows) {
         const studentId = String(row["Unique Id"] || "").trim().toUpperCase();
         const courseCode = String(row["Course Code"] || "").trim();
@@ -2166,7 +2173,8 @@
           "Actual Batch Number": statusRow["Actual Batch Number"],
           "Latest GPA": latestGpaByStudent.get(studentId)?.gpa ?? "",
           "Latest Failed Course Count": 0,
-          "Latest Failing Course Codes": ""
+          "Latest Failing Course Codes": "",
+          "Retake Fee": retakeFeeByStudent.get(studentId) ? "Yes" : "No"
         };
         for (const courseCode of courseColumns) {
           const key = `${studentId}::${courseCode}`;
@@ -2702,7 +2710,7 @@
         [
           "Removed matrix columns",
           "Title and PDF Batch Number are not shown as separate columns in the status workbook matrices.",
-          "Student Course Status, Course Attempts, and Grade Discrepancy keep BO Id, Student Name, Actual Batch Number, and course columns. Latest Grades also includes Latest GPA, Latest Failed Course Count, and Latest Failing Course Codes before the course columns. Report title remains visible inside Course Attempts cells."
+          "Student Course Status, Course Attempts, and Grade Discrepancy keep BO Id, Student Name, Actual Batch Number, and course columns. Latest Grades also includes Latest GPA, Latest Failed Course Count, Latest Failing Course Codes, and Retake Fee before the course columns. Report title remains visible inside Course Attempts cells."
         ],
         [
           "Combined or all-batch PDF",
@@ -2749,8 +2757,8 @@
         ],
         [
           "Latest Grades",
-          "Same structure as Student Course Status with added latest GPA and latest failing-course summary columns, but course cells show the latest counted grade where available.",
-          "Latest Failed Course Count counts course columns whose latest extracted grade is failing. Latest Failing Course Codes lists those courses comma-separated."
+          "Same structure as Student Course Status with added latest GPA, latest failing-course summary columns, and learner-level Retake Fee, but course cells show the latest counted grade where available.",
+          "Latest Failed Course Count counts course columns whose latest extracted grade is failing. Latest Failing Course Codes lists those courses comma-separated. Retake Fee shows Yes when any payable retake fee applies to that learner, otherwise No."
         ],
         [
           "Course Status Counts",
@@ -3396,7 +3404,8 @@
 
       const statusRows = buildStudentCourseStatusRows(masterCourseRows);
       const countRows = buildStudentCourseStatusCountRows(statusRows);
-      const latestGradeReport = buildStudentLatestGradeRows(masterCourseRows, statusRows);
+      const latestGradeFeeRows = buildFeeApplicableCourses(masterCourseRows, "");
+      const latestGradeReport = buildStudentLatestGradeRows(masterCourseRows, statusRows, latestGradeFeeRows);
       const courseAttemptRows = buildStudentCourseAttemptRows(masterCourseRows, statusRows);
       const gradeDiscrepancyReport = buildStudentGradeDiscrepancyRows(
         statusRows,
