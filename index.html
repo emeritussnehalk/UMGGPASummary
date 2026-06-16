@@ -485,10 +485,26 @@
       "OLCU613",
       "OLCU632",
       "BUSU600",
+      "BUSU630",
       "HRCU630",
       "BUSU640"
     ];
     const COURSE_SEQUENCE_INDEX = new Map(COURSE_SEQUENCE.map((code, idx) => [code, idx]));
+    const FINAL_BUCKET_COURSE_NAMES = {
+      OLCU614: "Team Leadership and Collaboration\nSignature Assignment",
+      BUSU620: "Economic Analysis",
+      MKTU605: "Marketing Management\nSignature Assignment",
+      BUSU610: "Data Analysis for Decision Making\nSignature Assignment",
+      ACCU602: "Financial Reporting & Analysis",
+      OLCU653: "Creating an Inclusive Climate: Advocacy\nStrategies for Leaders\nSignature Assignment",
+      FINU607: "Financial Management",
+      OLCU613: "Seminar in Organizational Dynamics",
+      OLCU632: "Leadership and Innovation",
+      BUSU630: "Business Process\nAnalysis and Innovation",
+      BUSU600: "Business Process\nAnalysis and Innovation",
+      HRCU630: "Conflict & Negotiation",
+      BUSU640: "Business Strategy and Competitive Advantage\nCapstone\nSignature Assignment"
+    };
     const HARDCODED_BATCH_MAPPING = {
       "B00722885": "1",
       "B00725472": "1",
@@ -2338,6 +2354,162 @@
       return ws;
     }
 
+    function excelColumnName(index) {
+      let n = index;
+      let name = "";
+      while (n > 0) {
+        const rem = (n - 1) % 26;
+        name = String.fromCharCode(65 + rem) + name;
+        n = Math.floor((n - 1) / 26);
+      }
+      return name;
+    }
+
+    function formatCourseCodeForDisplay(courseCode) {
+      return String(courseCode || "")
+        .trim()
+        .toUpperCase()
+        .replace(/^([A-Z]+)(\d+)$/, "$1 $2");
+    }
+
+    function buildFinalBucketCourseLabel(courseCode, index) {
+      const normalized = normalizeCourseCode(courseCode);
+      const courseName = FINAL_BUCKET_COURSE_NAMES[normalized] || "";
+      const displayCode = formatCourseCodeForDisplay(normalized);
+      const courseTitle = courseName ? `${displayCode}: ${courseName}` : displayCode;
+      return `Course ${index + 1}:\n${courseTitle}`;
+    }
+
+    function getStatusMatrixColumnMap(ws) {
+      const headers = ws.getRow(1).values.slice(1);
+      return new Map(headers.map((header, idx) => [header, idx + 1]));
+    }
+
+    function countStatusByBatch(statusRows, courseCode, batchNumber, status) {
+      const batchLabel = `Batch ${batchNumber}`;
+      return statusRows.reduce((count, row) => {
+        if (String(row["Actual Batch Number"] || "").trim() !== batchLabel) return count;
+        const value = String(row[courseCode] || "").trim();
+        if (status === null) return value ? count + 1 : count;
+        return value === status ? count + 1 : count;
+      }, 0);
+    }
+
+    function addFinalBucketsAndNosWorksheet(wb, statusRows, statusMatrixWs) {
+      const courseColumns = getStatusCourseColumns(statusRows);
+      const batchLabels = ["B1", "B2", "B3", "B4", "B5", "B6", "B7"];
+      const bucketRows = [
+        { label: "Total Enrolled Students", status: null, currentBatchOnly: true },
+        { label: "Withdrawn/Dropout/Admission Cancelled", status: "Not Found", currentBatchOnly: true },
+        { label: "Eligible for Convocation", status: "Eligible for Convocation" },
+        { label: "Successfully Passed", status: "Passed" },
+        { label: "First Timers", status: "First Timers" },
+        { label: "Failed", status: "Failed" }
+      ];
+      const ws = wb.addWorksheet("Final Buckets and Nos");
+      const headerFill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFDDEBF7" } };
+      const labelFill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE7E6E6" } };
+      const inputFill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFCE4D6" } };
+      const border = {
+        top: { style: "thin", color: { argb: "FF000000" } },
+        left: { style: "thin", color: { argb: "FF000000" } },
+        bottom: { style: "thin", color: { argb: "FF000000" } },
+        right: { style: "thin", color: { argb: "FF000000" } }
+      };
+      const statusHeaderMap = getStatusMatrixColumnMap(statusMatrixWs);
+      const batchStatusCol = statusHeaderMap.get("Actual Batch Number");
+      const statusLastRow = Math.max(statusRows.length + 1, 2);
+      const batchRange = batchStatusCol
+        ? `'Student Course Status'!$${excelColumnName(batchStatusCol)}$2:$${excelColumnName(batchStatusCol)}$${statusLastRow}`
+        : "";
+
+      ws.columns = [
+        { width: 48 },
+        { width: 48 },
+        ...batchLabels.map(() => ({ width: 8 }))
+      ];
+      ws.views = [{ state: "frozen", xSplit: 2, ySplit: 2 }];
+
+      ws.mergeCells(1, 1, 2, 1);
+      ws.mergeCells(1, 2, 2, 2);
+      ws.mergeCells(1, 3, 1, 2 + batchLabels.length);
+      ws.getCell(1, 1).value = "Courses";
+      ws.getCell(1, 2).value = "Status";
+      ws.getCell(1, 3).value = "# of Students (India)";
+      batchLabels.forEach((label, idx) => {
+        ws.getCell(2, idx + 3).value = label;
+      });
+
+      for (let row = 1; row <= 2; row += 1) {
+        for (let col = 1; col <= 2 + batchLabels.length; col += 1) {
+          const cell = ws.getCell(row, col);
+          cell.fill = headerFill;
+          cell.font = { bold: true };
+          cell.border = border;
+          cell.alignment = { vertical: "middle", horizontal: col >= 3 ? "center" : "left", wrapText: true };
+        }
+      }
+
+      courseColumns.forEach((courseCode, courseIdx) => {
+        const startRow = 3 + (courseIdx * bucketRows.length);
+        const endRow = startRow + bucketRows.length - 1;
+        const courseStatusCol = statusHeaderMap.get(courseCode);
+        const courseRange = courseStatusCol
+          ? `'Student Course Status'!$${excelColumnName(courseStatusCol)}$2:$${excelColumnName(courseStatusCol)}$${statusLastRow}`
+          : "";
+
+        ws.mergeCells(startRow, 1, endRow, 1);
+        const courseCell = ws.getCell(startRow, 1);
+        courseCell.value = buildFinalBucketCourseLabel(courseCode, courseIdx);
+        courseCell.fill = labelFill;
+        courseCell.font = { bold: true };
+        courseCell.alignment = { vertical: "middle", horizontal: "left", wrapText: true };
+        courseCell.border = border;
+
+        bucketRows.forEach((bucket, bucketIdx) => {
+          const rowNumber = startRow + bucketIdx;
+          const statusCell = ws.getCell(rowNumber, 2);
+          statusCell.value = bucket.label;
+          statusCell.fill = labelFill;
+          statusCell.font = { bold: true };
+          statusCell.alignment = { vertical: "middle", horizontal: "left", wrapText: true };
+          statusCell.border = border;
+
+          batchLabels.forEach((batchLabel, batchIdx) => {
+            const batchNumber = batchIdx + 1;
+            const cell = ws.getCell(rowNumber, batchIdx + 3);
+            const isCurrentBatchOnlyBlank = bucket.currentBatchOnly && batchNumber < 5;
+            cell.border = border;
+            cell.alignment = { vertical: "middle", horizontal: "right" };
+            if (bucket.currentBatchOnly) {
+              cell.fill = inputFill;
+            }
+
+            if (isCurrentBatchOnlyBlank || !courseRange || !batchRange) {
+              cell.value = "";
+              return;
+            }
+
+            const result = countStatusByBatch(statusRows, courseCode, batchNumber, bucket.status);
+            const formula = bucket.status === null
+              ? `COUNTIFS(${batchRange},"Batch ${batchNumber}",${courseRange},"<>")`
+              : `COUNTIFS(${batchRange},"Batch ${batchNumber}",${courseRange},"${bucket.status}")`;
+            cell.value = { formula, result };
+          });
+
+          ws.getRow(rowNumber).height = 20;
+        });
+
+        ws.getRow(startRow).height = 28;
+      });
+
+      for (let row = 3; row <= ws.rowCount; row += 1) {
+        ws.getCell(row, 1).border = border;
+      }
+
+      return ws;
+    }
+
     function applyExcelStudentMatrixStyles(ws, statusRows, options = {}) {
       if (!statusRows.length) return;
       const courseColumns = getStatusCourseColumns(statusRows);
@@ -2725,7 +2897,7 @@
         [
           "Course sequence",
           "A report contains more than one course.",
-          "Known courses follow this fixed order: OLCU614, BUSU620, MKTU605, BUSU610, ACCU602, OLCU653, FINU607, OLCU613, OLCU632, BUSU600, HRCU630, BUSU640. Any other detected course appears after these."
+          "Known courses follow this fixed order: OLCU614, BUSU620, MKTU605, BUSU610, ACCU602, OLCU653, FINU607, OLCU613, OLCU632, BUSU600, BUSU630, HRCU630, BUSU640. Any other detected course appears after these."
         ],
         [
           "Missing course for present student",
@@ -3422,6 +3594,7 @@
       );
 
       const wb = new window.ExcelJS.Workbook();
+      wb.calcProperties = { ...(wb.calcProperties || {}), fullCalcOnLoad: true };
       const ws = addJsonExcelWorksheet(wb, "Student Course Status", statusRows);
       const ws2 = addJsonExcelWorksheet(wb, "Course Attempts", courseAttemptRows);
       const ws3 = addJsonExcelWorksheet(
@@ -3433,6 +3606,7 @@
       const ws4 = addJsonExcelWorksheet(wb, "Latest Grades", latestGradeReport.rows);
       addJsonExcelWorksheet(wb, "Course Status Counts", countRows);
       addAoaExcelWorksheet(wb, "Batch Status Counts", batchStatusRows);
+      addFinalBucketsAndNosWorksheet(wb, statusRows, ws);
       addAoaExcelWorksheet(wb, "Status Definitions", definitionRows);
       applyExcelStudentMatrixStyles(ws, statusRows, { specialFailKeys: latestGradeReport.specialFailKeys });
       applyExcelStudentMatrixStyles(ws2, statusRows, { specialFailKeys: latestGradeReport.specialFailKeys });
