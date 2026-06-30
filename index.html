@@ -415,7 +415,7 @@
             </tr>
             <tr>
               <td>Passed Students List</td>
-              <td class="report-desc">Downloads students whose course statuses are passed, not found, or eligible for convocation. Not Found students are included here.</td>
+              <td class="report-desc">Downloads students whose course statuses are passed, withdrawn/cancelled/dropout/suspended-payment overdue, or eligible for convocation. Withdrawn/cancelled/dropout/suspended-payment overdue students are included here.</td>
               <td class="report-action"><button id="downloadPassedReportBtn" class="ghost" disabled>Download</button></td>
             </tr>
           </tbody>
@@ -474,6 +474,7 @@
 
     const FEE_PER_COURSE = 15000;
     const GST_RATE = 0.18;
+    const NOT_FOUND_STATUS_LABEL = "Withdrawn/ Cancelled/ Dropout / Suspended-Payment Overdue";
     const COURSE_SEQUENCE = [
       "OLCU614",
       "BUSU620",
@@ -831,6 +832,60 @@
       "B00808208": "7",
       "B00808779": "7",
       "B00809243": "7"
+    };
+
+    const PAYMENT_STATUS_BY_STUDENT_ID = {
+      "B00728572": "Dropout",
+      "B00728573": "Suspended-Payment Overdue",
+      "B00729659": "Suspended-Payment Overdue",
+      "B00731276": "Suspended-Payment Overdue",
+      "B00733782": "Suspended-Payment Overdue",
+      "B00736734": "Suspended-Payment Overdue",
+      "B00738570": "Suspended-Payment Overdue",
+      "B00739918": "Suspended-Payment Overdue",
+      "B00740936": "Suspended-Payment Overdue",
+      "B00741452": "Suspended-Payment Overdue",
+      "B00741581": "Suspended-Payment Overdue",
+      "B00747465": "Suspended-Payment Overdue",
+      "B00747866": "Suspended-Payment Overdue",
+      "B00748003": "Suspended-Payment Overdue",
+      "B00748005": "Suspended-Payment Overdue",
+      "B00748006": "Suspended-Payment Overdue",
+      "B00751457": "Suspended-Payment Overdue",
+      "B00752444": "Suspended-Payment Overdue",
+      "B00752476": "Suspended-Payment Overdue",
+      "B00753736": "Suspended-Payment Overdue",
+      "B00754774": "Suspended-Payment Overdue",
+      "B00754983": "Suspended-Payment Overdue",
+      "B00756321": "Suspended-Payment Overdue",
+      "B00756325": "Suspended-Payment Overdue",
+      "B00757070": "Suspended-Payment Overdue",
+      "B00757073": "Suspended-Payment Overdue",
+      "B00759988": "Suspended-Payment Overdue",
+      "B00760603": "Suspended-Payment Overdue",
+      "B00761559": "Suspended-Payment Overdue",
+      "B00761747": "Suspended-Payment Overdue",
+      "B00761748": "Suspended-Payment Overdue",
+      "B00761750": "Suspended-Payment Overdue",
+      "B00761756": "Suspended-Payment Overdue",
+      "B00762012": "Suspended-Payment Overdue",
+      "B00762673": "Suspended-Payment Overdue",
+      "B00763021": "Suspended-Payment Overdue",
+      "B00764777": "Suspended-Payment Overdue",
+      "B00770204": "Suspended-Payment Overdue",
+      "B00771200": "Suspended-Payment Overdue",
+      "B00771390": "Suspended-Payment Overdue",
+      "B00774422": "Suspended-Payment Overdue",
+      "B00722885": "Withdrawn",
+      "B00735311": "Withdrawn",
+      "B00738068": "Withdrawn",
+      "B00738886": "Withdrawn",
+      "B00740139": "Withdrawn",
+      "B00741117": "Withdrawn",
+      "B00750142": "Withdrawn",
+      "B00759987": "Withdrawn",
+      "B00760300": "Withdrawn",
+      "B00761810": "Withdrawn"
     };
 
     const HARDCODED_STUDENT_NAMES = {
@@ -1650,6 +1705,11 @@
       return HARDCODED_STUDENT_NAMES[sid] || "";
     }
 
+    function getPaymentStatus(studentId) {
+      const sid = String(studentId || "").trim().toUpperCase();
+      return PAYMENT_STATUS_BY_STUDENT_ID[sid] || "Admission Granted";
+    }
+
     function mapExportRows(rows) {
       return rows.map(r => {
         const out = { ...r };
@@ -2023,7 +2083,7 @@
           } else if (studentsInReport.has(studentId)) {
             exportRow[courseCode] = "First Timers";
           } else {
-            exportRow[courseCode] = "Not Found";
+            exportRow[courseCode] = NOT_FOUND_STATUS_LABEL;
           }
         }
         if (uniqueCourseCodes.length > 0 && passedCourseCount === uniqueCourseCodes.length) {
@@ -2054,7 +2114,7 @@
           "First Timers": 0,
           "Passed": 0,
           "Eligible for Convocation": 0,
-          "Not Found": 0,
+          [NOT_FOUND_STATUS_LABEL]: 0,
           "Failed": 0
         };
 
@@ -2068,8 +2128,8 @@
             counts["Passed"] += 1;
           } else if (status === "Eligible for Convocation") {
             counts["Eligible for Convocation"] += 1;
-          } else if (status === "Not Found") {
-            counts["Not Found"] += 1;
+          } else if (status === NOT_FOUND_STATUS_LABEL) {
+            counts[NOT_FOUND_STATUS_LABEL] += 1;
           }
         }
 
@@ -2081,7 +2141,7 @@
       const normalized = String(status || "").trim();
       if (normalized === "Passed" || normalized === "Eligible for Convocation") return "DCFCE7";
       if (normalized === "Failed") return "FEE2E2";
-      if (normalized === "Not Found") return "FFEDD5";
+      if (normalized === NOT_FOUND_STATUS_LABEL) return "FFEDD5";
       if (normalized === "First Timers") return "DBEAFE";
       return "";
     }
@@ -2134,12 +2194,12 @@
       const specialFailKeys = new Set();
       const specialTitlesByStudent = new Map();
       const attemptTimelineByKey = new Map();
-      const retakeFeeByStudent = new Map();
+      const retakeFeeByStudentBatch = new Map();
       for (const row of feeRows) {
-        const studentId = String(row["Unique Id"] || "").trim().toUpperCase();
-        if (!studentId) continue;
-        if (!retakeFeeByStudent.has(studentId)) retakeFeeByStudent.set(studentId, false);
-        if (row["Fee Applicable"] === "Yes") retakeFeeByStudent.set(studentId, true);
+        const key = getStudentGroupKey(row);
+        if (!key || key === "::") continue;
+        if (!retakeFeeByStudentBatch.has(key)) retakeFeeByStudentBatch.set(key, false);
+        if (row["Fee Applicable"] === "Yes") retakeFeeByStudentBatch.set(key, true);
       }
       for (const row of courseRows) {
         const studentId = String(row["Unique Id"] || "").trim().toUpperCase();
@@ -2182,6 +2242,8 @@
       const courseColumns = getStatusCourseColumns(statusRows);
       const rows = statusRows.map(statusRow => {
         const studentId = String(statusRow["BO Id"] || "").trim().toUpperCase();
+        const actualBatchNumber = String(statusRow["Actual Batch Number"] || "").trim().toUpperCase();
+        const studentBatchKey = `${studentId}::${actualBatchNumber}`;
         const latestFailingCourseCodes = [];
         const out = {
           "BO Id": statusRow["BO Id"],
@@ -2190,7 +2252,8 @@
           "Latest GPA": latestGpaByStudent.get(studentId)?.gpa ?? "",
           "Latest Failed Course Count": 0,
           "Latest Failing Course Codes": "",
-          "Retake Fee": retakeFeeByStudent.get(studentId) ? "Yes" : "No"
+          "Retake Fee": retakeFeeByStudentBatch.get(studentBatchKey) ? "Yes" : "No",
+          "Payment Status": getPaymentStatus(studentId)
         };
         for (const courseCode of courseColumns) {
           const key = `${studentId}::${courseCode}`;
@@ -2400,7 +2463,7 @@
       const batchLabels = ["B1", "B2", "B3", "B4", "B5", "B6", "B7"];
       const bucketRows = [
         { label: "Total Enrolled Students", status: null, currentBatchOnly: true },
-        { label: "Withdrawn/Dropout/Admission Cancelled", status: "Not Found", currentBatchOnly: true },
+        { label: "Withdrawn/Dropout/Admission Cancelled", status: NOT_FOUND_STATUS_LABEL, currentBatchOnly: true },
         { label: "Eligible for Convocation", status: "Eligible for Convocation" },
         { label: "Successfully Passed", status: "Passed" },
         { label: "First Timers", status: "First Timers" },
@@ -2682,7 +2745,7 @@
       const statusColumns = [
         "Eligible for Convocation",
         "Failed",
-        "Not Found",
+        NOT_FOUND_STATUS_LABEL,
         "Passed",
         "First Timers"
       ];
@@ -2789,9 +2852,9 @@
           "The course cell is marked First Timers because the student is present in the report set, but this course is missing for that student."
         ],
         [
-          "Not Found",
+          NOT_FOUND_STATUS_LABEL,
           "Student is present in the built-in BO Id master list, but does not appear in any processed row from the uploaded PDFs.",
-          "Every detected course cell for that student is marked Not Found."
+          `Every detected course cell for that student is marked ${NOT_FOUND_STATUS_LABEL}.`
         ],
         [
           "Eligible for Convocation",
@@ -2882,7 +2945,7 @@
         [
           "Removed matrix columns",
           "Title and PDF Batch Number are not shown as separate columns in the status workbook matrices.",
-          "Student Course Status, Course Attempts, and Grade Discrepancy keep BO Id, Student Name, Actual Batch Number, and course columns. Latest Grades also includes Latest GPA, Latest Failed Course Count, Latest Failing Course Codes, and Retake Fee before the course columns. Report title remains visible inside Course Attempts cells."
+          "Student Course Status, Course Attempts, and Grade Discrepancy keep BO Id, Student Name, Actual Batch Number, and course columns. Latest Grades also includes Latest GPA, Latest Failed Course Count, Latest Failing Course Codes, Retake Fee, and Payment Status before the course columns. Report title remains visible inside Course Attempts cells."
         ],
         [
           "Combined or all-batch PDF",
@@ -2907,7 +2970,7 @@
         [
           "Absent student",
           "Student appears in the built-in mapping but does not appear in any processed row.",
-          "That student's course cells are marked Not Found."
+          `That student's course cells are marked ${NOT_FOUND_STATUS_LABEL}.`
         ],
         [],
         ["Workbook Sheets"],
@@ -2915,7 +2978,7 @@
         [
           "Student Course Status",
           "Main BO Id-wise status matrix.",
-          "Course cells show Passed, Failed, First Timers, Not Found, or Eligible for Convocation."
+          `Course cells show Passed, Failed, First Timers, ${NOT_FOUND_STATUS_LABEL}, or Eligible for Convocation.`
         ],
         [
           "Course Attempts",
@@ -2929,13 +2992,13 @@
         ],
         [
           "Latest Grades",
-          "Same structure as Student Course Status with added latest GPA, latest failing-course summary columns, and learner-level Retake Fee, but course cells show the latest counted grade where available.",
-          "Latest Failed Course Count counts course columns whose latest extracted grade is failing. Latest Failing Course Codes lists those courses comma-separated. Retake Fee shows Yes when any payable retake fee applies to that learner, otherwise No."
+          "Same structure as Student Course Status with added latest GPA, latest failing-course summary columns, learner-level Retake Fee, and Payment Status, but course cells show the latest counted grade where available.",
+          "Latest Failed Course Count counts course columns whose latest extracted grade is failing. Latest Failing Course Codes lists those courses comma-separated. Retake Fee shows Yes when any payable retake fee applies to that learner, otherwise No. Payment Status defaults to Admission Granted unless the BO Id is mapped to Dropout, Suspended-Payment Overdue, or Withdrawn."
         ],
         [
           "Course Status Counts",
           "Course-wise totals by status.",
-          "Each row is a course code with counts of First Timers, Passed, Eligible for Convocation, Not Found, and Failed."
+          `Each row is a course code with counts of First Timers, Passed, Eligible for Convocation, ${NOT_FOUND_STATUS_LABEL}, and Failed.`
         ],
         [
           "Batch Status Counts",
@@ -2962,7 +3025,7 @@
         ],
         [
           "Light orange fill",
-          "Not Found.",
+          `${NOT_FOUND_STATUS_LABEL}.`,
           "Course cells in Student Course Status, Latest Grades, and Course Attempts."
         ],
         [
@@ -3008,7 +3071,7 @@
         if (type === "passed") {
           return statuses.every(status =>
             status === "Passed" ||
-            status === "Not Found" ||
+            status === NOT_FOUND_STATUS_LABEL ||
             status === "Eligible for Convocation"
           );
         }
