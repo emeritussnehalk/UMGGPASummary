@@ -1729,7 +1729,7 @@
 
     function getReportCutoffFromFileName(fileName) {
       const name = String(fileName || "");
-      const m = name.match(/\b(I\d+)\s+(20\d{2})\b/i);
+      const m = name.match(/\b(I\d+C?)\s+(20\d{2})\b/i);
       if (!m) return null;
       return {
         level: String(m[1] || "").toUpperCase(),
@@ -1746,10 +1746,11 @@
     }
 
     function titleSortValue(value) {
-      const m = String(value || "").match(/(?:\bB(\d+)|\bBU)?\s*\bI(\d+)\s+(20\d{2})\b/i);
+      const m = String(value || "").match(/(?:\bB(\d+)|\bBU)?\s*\bI(\d+)(C?)\s+(20\d{2})\b/i);
       if (!m) return Number.MAX_SAFE_INTEGER;
       const batch = m[1] ? Number(m[1]) : 0;
-      return Number(m[3]) * 10000 + Number(m[2]) * 100 + batch;
+      const convocationOffset = m[3] ? 1 : 0;
+      return Number(m[4]) * 10000 + Number(m[2]) * 100 + (convocationOffset * 10) + batch;
     }
 
     function splitTitleValues(value) {
